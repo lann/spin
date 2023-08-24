@@ -4,6 +4,7 @@ use crate::{HttpExecutor, HttpTrigger, Store};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use hyper::{Body, Request, Response};
+use outbound_http::OutboundHttpComponent;
 use spin_core::Instance;
 use spin_trigger::{EitherInstance, TriggerAppEngine};
 use spin_world::http_types;
@@ -31,6 +32,16 @@ impl HttpExecutor for SpinHttpExecutor {
         let EitherInstance::Component(instance) = instance else {
             unreachable!()
         };
+
+        if let Some(outbound_http_handle) = engine
+            .engine
+            .find_host_component_handle::<OutboundHttpComponent>()
+        {
+            let outbound_http_data = store
+                .host_components_data()
+                .get_or_insert(outbound_http_handle);
+            // this is where you'd update some new field on OutboundHttp
+        }
 
         let resp = Self::execute_impl(store, instance, base, raw_route, req, client_addr)
             .await
