@@ -1,6 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Context;
+use futures_util::{future::{BoxFuture, Shared}, FutureExt};
+use spin_factor_variables::VariablesFactor;
 use spin_factor_wasi::WasiFactor;
 use spin_factors::{Factor, FactorInstancePreparer, Result, SpinFactors};
 use spin_outbound_networking::{AllowedHostsConfig, HostConfig, PortConfig, ALLOWED_HOSTS_KEY};
@@ -17,33 +19,34 @@ impl Factor for OutboundNetworkingFactor {
         app: &spin_factors::App,
         _ctx: spin_factors::ConfigureAppContext<Factors>,
     ) -> Result<Self::AppConfig> {
-        let mut cfg = AppConfig::default();
-        // TODO: resolve resolver resolution
-        let resolver = Default::default();
-        for component in app.components() {
-            if let Some(hosts) = component.get_metadata(ALLOWED_HOSTS_KEY)? {
-                let allowed_hosts = AllowedHostsConfig::parse(&hosts, &resolver)?;
-                cfg.component_allowed_hosts
-                    .insert(component.id().to_string(), Arc::new(allowed_hosts));
-            }
-        }
-        Ok(cfg)
+        // Extract allowed_outbound_hosts for all components
+        let component_allowed_hosts = app
+            .components()
+            .map(|component| {
+                Ok((
+                    component.id().to_string(),
+                    component
+                        .get_metadata(ALLOWED_HOSTS_KEY)?
+                        .unwrap_or_default(),
+                ))
+            })
+            .collect::<Result<_>>()?;
+
+        Ok(AppConfig {
+            component_allowed_hosts,
+        })
     }
 }
 
 #[derive(Default)]
 pub struct AppConfig {
-    component_allowed_hosts: HashMap<String, Arc<AllowedHostsConfig>>,
+    component_allowed_hosts: HashMap<String, Vec<String>>,
 }
+
+type AllowedHostsFuture = Shared<BoxFuture<'static, Arc<anyhow::Result<AllowedHostsConfig>>>>;
 
 pub struct InstancePreparer {
-    allowed_hosts: Arc<AllowedHostsConfig>,
-}
-
-impl InstancePreparer {
-    pub fn allowed_hosts(&self) -> &Arc<AllowedHostsConfig> {
-        &self.allowed_hosts
-    }
+    allowed_hosts_future: AllowedHostsFuture,
 }
 
 impl FactorInstancePreparer<OutboundNetworkingFactor> for InstancePreparer {
@@ -52,16 +55,26 @@ impl FactorInstancePreparer<OutboundNetworkingFactor> for InstancePreparer {
         app_component: &spin_factors::AppComponent,
         mut ctx: spin_factors::PrepareContext<Factors>,
     ) -> Result<Self> {
-        let allowed_hosts = ctx
-            .app_config::<OutboundNetworkingFactor>()?
-            .component_allowed_hosts
-            .get(app_component.id())
-            .context("missing component")?
-            .clone();
+        let hosts = 
+            ctx.app_config::<OutboundNetworkingFactor>()
+                .unwrap()
+                .component_allowed_hosts
+                .get(app_component.id())
+                .context("missing component allowed hosts")?;
+        let resolver = ctx.instance_preparer_mut::<VariablesFactor>()?.resolver().clone();
+        let allowed_hosts_future = async move {
+            let prepared = resolver.prepare().await?;
+            Ok(AllowedHostsConfig::parse(&hosts, &prepared))
+        }.boxed().shared();
+        let prepared_resolver = resolver.prepare().await?;
+        let allowed_hosts = AllowedHostsConfig::parse(
+                .context("missing component allowed hosts")?,
+            &prepared_resolver,
+        )?;
 
         // Update Wasi socket allowed ports
         let wasi_preparer = ctx.instance_preparer_mut::<WasiFactor>()?;
-        match &*allowed_hosts {
+        match &allowed_hosts {
             AllowedHostsConfig::All => wasi_preparer.inherit_network(),
             AllowedHostsConfig::SpecificHosts(configs) => {
                 for config in configs {
@@ -77,10 +90,18 @@ impl FactorInstancePreparer<OutboundNetworkingFactor> for InstancePreparer {
             }
         }
 
-        Ok(Self { allowed_hosts })
+        Ok(Self {
+            allowed_hosts: Arc::new(allowed_hosts),
+        })
     }
 
     fn prepare(self) -> Result<<OutboundNetworkingFactor as Factor>::InstanceState> {
         Ok(())
+    }
+}
+
+impl InstancePreparer {
+    pub async fn resolve_allowed_hosts(&self) -> Arc<anyhow::Result<AllowedHostsConfig>> {
+        self.allowed_hosts_future.clone().await
     }
 }
