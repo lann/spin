@@ -67,6 +67,12 @@ mod bindings {
                 "[method]pollable.block",
                 "[method]pollable.ready",
                 "poll",
+
+                "[method]tcp-socket.start-bind",
+                "[method]tcp-socket.start-connect",
+                "[method]udp-socket.start-bind",
+                "[method]udp-socket.stream",
+                "[method]outgoing-datagram-stream.send",
             ]
         },
         with: {
@@ -97,7 +103,6 @@ mod bindings {
             "wasi:http/types/request-options": latest::http::types::RequestOptions,
         },
         trappable_imports: true,
-        skip_mut_forwarding_impls: true,
     });
 }
 
@@ -148,13 +153,13 @@ where
     T: WasiView + WasiHttpView,
 {
     // interfaces from the "command" world
-    fn project<T, F>(f: F) -> F
+    fn type_annotate_wasi<T: WasiView, F>(f: F) -> F
     where
-        F: Fn(&mut T) -> &mut T,
+        F: Fn(&mut T) -> &mut (dyn WasiView + '_),
     {
         f
     }
-    let closure = project::<T, _>(|t| t);
+    let closure = type_annotate_wasi::<T, _>(|t| t);
     wasi::clocks::monotonic_clock::add_to_linker_get_host(linker, closure)?;
     wasi::clocks::wall_clock::add_to_linker_get_host(linker, closure)?;
     wasi::filesystem::types::add_to_linker_get_host(linker, closure)?;
@@ -183,73 +188,65 @@ where
     wasi::sockets::network::add_to_linker_get_host(linker, closure)?;
     wasi::sockets::ip_name_lookup::add_to_linker_get_host(linker, closure)?;
 
+    fn type_annotate_http<T: WasiHttpView, F>(f: F) -> F
+    where
+        F: Fn(&mut T) -> &mut (dyn WasiHttpView + '_),
+    {
+        f
+    }
+    let closure = type_annotate_http::<T, _>(|t| t);
     wasi::http::types::add_to_linker_get_host(linker, closure)?;
     wasi::http::outgoing_handler::add_to_linker_get_host(linker, closure)?;
     Ok(())
 }
 
-impl<T> wasi::clocks::monotonic_clock::Host for T
-where
-    T: WasiView,
-{
+impl wasi::clocks::monotonic_clock::Host for dyn WasiView + '_ {
     fn now(&mut self) -> wasmtime::Result<Instant> {
-        <T as latest::clocks::monotonic_clock::Host>::now(self)
+        latest::clocks::monotonic_clock::Host::now(self)
     }
 
     fn resolution(&mut self) -> wasmtime::Result<Instant> {
-        <T as latest::clocks::monotonic_clock::Host>::resolution(self)
+        latest::clocks::monotonic_clock::Host::resolution(self)
     }
 
     fn subscribe_instant(&mut self, when: Instant) -> wasmtime::Result<Resource<Pollable>> {
-        <T as latest::clocks::monotonic_clock::Host>::subscribe_instant(self, when)
+        latest::clocks::monotonic_clock::Host::subscribe_instant(self, when)
     }
 
     fn subscribe_duration(&mut self, when: Duration) -> wasmtime::Result<Resource<Pollable>> {
-        <T as latest::clocks::monotonic_clock::Host>::subscribe_duration(self, when)
+        latest::clocks::monotonic_clock::Host::subscribe_duration(self, when)
     }
 }
 
-impl<T> wasi::clocks::wall_clock::Host for T
-where
-    T: WasiView,
-{
+impl wasi::clocks::wall_clock::Host for dyn WasiView + '_ {
     fn now(&mut self) -> wasmtime::Result<Datetime> {
-        Ok(<T as latest::clocks::wall_clock::Host>::now(self)?.into())
+        Ok(latest::clocks::wall_clock::Host::now(self)?.into())
     }
 
     fn resolution(&mut self) -> wasmtime::Result<Datetime> {
-        Ok(<T as latest::clocks::wall_clock::Host>::resolution(self)?.into())
+        Ok(latest::clocks::wall_clock::Host::resolution(self)?.into())
     }
 }
 
-impl<T> wasi::filesystem::types::Host for T
-where
-    T: WasiView,
-{
+impl wasi::filesystem::types::Host for dyn WasiView + '_ {
     fn filesystem_error_code(
         &mut self,
         err: Resource<wasi::filesystem::types::Error>,
     ) -> wasmtime::Result<Option<FsErrorCode>> {
-        Ok(
-            <T as latest::filesystem::types::Host>::filesystem_error_code(self, err)?
-                .map(|e| e.into()),
-        )
+        Ok(latest::filesystem::types::Host::filesystem_error_code(self, err)?.map(|e| e.into()))
     }
 }
 
 #[async_trait]
-impl<T> wasi::filesystem::types::HostDescriptor for T
-where
-    T: WasiView,
-{
+impl wasi::filesystem::types::HostDescriptor for dyn WasiView + '_ {
     fn read_via_stream(
         &mut self,
         self_: Resource<Descriptor>,
         offset: Filesize,
     ) -> wasmtime::Result<Result<Resource<InputStream>, FsErrorCode>> {
-        convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::read_via_stream(self, self_, offset),
-        )
+        convert_result(latest::filesystem::types::HostDescriptor::read_via_stream(
+            self, self_, offset,
+        ))
     }
 
     fn write_via_stream(
@@ -257,18 +254,16 @@ where
         self_: Resource<Descriptor>,
         offset: Filesize,
     ) -> wasmtime::Result<Result<Resource<OutputStream>, FsErrorCode>> {
-        convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::write_via_stream(self, self_, offset),
-        )
+        convert_result(latest::filesystem::types::HostDescriptor::write_via_stream(
+            self, self_, offset,
+        ))
     }
 
     fn append_via_stream(
         &mut self,
         self_: Resource<Descriptor>,
     ) -> wasmtime::Result<Result<Resource<OutputStream>, FsErrorCode>> {
-        convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::append_via_stream(self, self_),
-        )
+        convert_result(latest::filesystem::types::HostDescriptor::append_via_stream(self, self_))
     }
 
     async fn advise(
@@ -279,7 +274,7 @@ where
         advice: Advice,
     ) -> wasmtime::Result<Result<(), FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::advise(
+            latest::filesystem::types::HostDescriptor::advise(
                 self,
                 self_,
                 offset,
@@ -294,27 +289,21 @@ where
         &mut self,
         self_: Resource<Descriptor>,
     ) -> wasmtime::Result<Result<(), FsErrorCode>> {
-        convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::sync_data(self, self_).await,
-        )
+        convert_result(latest::filesystem::types::HostDescriptor::sync_data(self, self_).await)
     }
 
     async fn get_flags(
         &mut self,
         self_: Resource<Descriptor>,
     ) -> wasmtime::Result<Result<DescriptorFlags, FsErrorCode>> {
-        convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::get_flags(self, self_).await,
-        )
+        convert_result(latest::filesystem::types::HostDescriptor::get_flags(self, self_).await)
     }
 
     async fn get_type(
         &mut self,
         self_: Resource<Descriptor>,
     ) -> wasmtime::Result<Result<DescriptorType, FsErrorCode>> {
-        convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::get_type(self, self_).await,
-        )
+        convert_result(latest::filesystem::types::HostDescriptor::get_type(self, self_).await)
     }
 
     async fn set_size(
@@ -322,9 +311,7 @@ where
         self_: Resource<Descriptor>,
         size: Filesize,
     ) -> wasmtime::Result<Result<(), FsErrorCode>> {
-        convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::set_size(self, self_, size).await,
-        )
+        convert_result(latest::filesystem::types::HostDescriptor::set_size(self, self_, size).await)
     }
 
     async fn set_times(
@@ -334,7 +321,7 @@ where
         data_modification_timestamp: NewTimestamp,
     ) -> wasmtime::Result<Result<(), FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::set_times(
+            latest::filesystem::types::HostDescriptor::set_times(
                 self,
                 self_,
                 data_access_timestamp.into(),
@@ -351,8 +338,7 @@ where
         offset: Filesize,
     ) -> wasmtime::Result<Result<(Vec<u8>, bool), FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::read(self, self_, length, offset)
-                .await,
+            latest::filesystem::types::HostDescriptor::read(self, self_, length, offset).await,
         )
     }
 
@@ -363,8 +349,7 @@ where
         offset: Filesize,
     ) -> wasmtime::Result<Result<Filesize, FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::write(self, self_, buffer, offset)
-                .await,
+            latest::filesystem::types::HostDescriptor::write(self, self_, buffer, offset).await,
         )
     }
 
@@ -372,16 +357,14 @@ where
         &mut self,
         self_: Resource<Descriptor>,
     ) -> wasmtime::Result<Result<Resource<DirectoryEntryStream>, FsErrorCode>> {
-        convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::read_directory(self, self_).await,
-        )
+        convert_result(latest::filesystem::types::HostDescriptor::read_directory(self, self_).await)
     }
 
     async fn sync(
         &mut self,
         self_: Resource<Descriptor>,
     ) -> wasmtime::Result<Result<(), FsErrorCode>> {
-        convert_result(<T as latest::filesystem::types::HostDescriptor>::sync(self, self_).await)
+        convert_result(latest::filesystem::types::HostDescriptor::sync(self, self_).await)
     }
 
     async fn create_directory_at(
@@ -390,10 +373,7 @@ where
         path: String,
     ) -> wasmtime::Result<Result<(), FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::create_directory_at(
-                self, self_, path,
-            )
-            .await,
+            latest::filesystem::types::HostDescriptor::create_directory_at(self, self_, path).await,
         )
     }
 
@@ -401,7 +381,7 @@ where
         &mut self,
         self_: Resource<Descriptor>,
     ) -> wasmtime::Result<Result<DescriptorStat, FsErrorCode>> {
-        convert_result(<T as latest::filesystem::types::HostDescriptor>::stat(self, self_).await)
+        convert_result(latest::filesystem::types::HostDescriptor::stat(self, self_).await)
     }
 
     async fn stat_at(
@@ -411,7 +391,7 @@ where
         path: String,
     ) -> wasmtime::Result<Result<DescriptorStat, FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::stat_at(
+            latest::filesystem::types::HostDescriptor::stat_at(
                 self,
                 self_,
                 path_flags.into(),
@@ -430,7 +410,7 @@ where
         data_modification_timestamp: NewTimestamp,
     ) -> wasmtime::Result<Result<(), FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::set_times_at(
+            latest::filesystem::types::HostDescriptor::set_times_at(
                 self,
                 self_,
                 path_flags.into(),
@@ -451,7 +431,7 @@ where
         new_path: String,
     ) -> wasmtime::Result<Result<(), FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::link_at(
+            latest::filesystem::types::HostDescriptor::link_at(
                 self,
                 self_,
                 old_path_flags.into(),
@@ -472,7 +452,7 @@ where
         flags: DescriptorFlags,
     ) -> wasmtime::Result<Result<Resource<Descriptor>, FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::open_at(
+            latest::filesystem::types::HostDescriptor::open_at(
                 self,
                 self_,
                 path_flags.into(),
@@ -490,7 +470,7 @@ where
         path: String,
     ) -> wasmtime::Result<Result<String, FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::readlink_at(self, self_, path).await,
+            latest::filesystem::types::HostDescriptor::readlink_at(self, self_, path).await,
         )
     }
 
@@ -500,10 +480,7 @@ where
         path: String,
     ) -> wasmtime::Result<Result<(), FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::remove_directory_at(
-                self, self_, path,
-            )
-            .await,
+            latest::filesystem::types::HostDescriptor::remove_directory_at(self, self_, path).await,
         )
     }
 
@@ -515,7 +492,7 @@ where
         new_path: String,
     ) -> wasmtime::Result<Result<(), FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::rename_at(
+            latest::filesystem::types::HostDescriptor::rename_at(
                 self,
                 self_,
                 old_path,
@@ -533,10 +510,8 @@ where
         new_path: String,
     ) -> wasmtime::Result<Result<(), FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::symlink_at(
-                self, self_, old_path, new_path,
-            )
-            .await,
+            latest::filesystem::types::HostDescriptor::symlink_at(self, self_, old_path, new_path)
+                .await,
         )
     }
 
@@ -546,8 +521,7 @@ where
         path: String,
     ) -> wasmtime::Result<Result<(), FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::unlink_file_at(self, self_, path)
-                .await,
+            latest::filesystem::types::HostDescriptor::unlink_file_at(self, self_, path).await,
         )
     }
 
@@ -556,16 +530,14 @@ where
         self_: Resource<Descriptor>,
         other: Resource<Descriptor>,
     ) -> wasmtime::Result<bool> {
-        <T as latest::filesystem::types::HostDescriptor>::is_same_object(self, self_, other).await
+        latest::filesystem::types::HostDescriptor::is_same_object(self, self_, other).await
     }
 
     async fn metadata_hash(
         &mut self,
         self_: Resource<Descriptor>,
     ) -> wasmtime::Result<Result<MetadataHashValue, FsErrorCode>> {
-        convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::metadata_hash(self, self_).await,
-        )
+        convert_result(latest::filesystem::types::HostDescriptor::metadata_hash(self, self_).await)
     }
 
     async fn metadata_hash_at(
@@ -575,7 +547,7 @@ where
         path: String,
     ) -> wasmtime::Result<Result<MetadataHashValue, FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDescriptor>::metadata_hash_at(
+            latest::filesystem::types::HostDescriptor::metadata_hash_at(
                 self,
                 self_,
                 path_flags.into(),
@@ -586,82 +558,65 @@ where
     }
 
     fn drop(&mut self, rep: Resource<Descriptor>) -> wasmtime::Result<()> {
-        <T as latest::filesystem::types::HostDescriptor>::drop(self, rep)
+        latest::filesystem::types::HostDescriptor::drop(self, rep)
     }
 }
 
 #[async_trait]
-impl<T> wasi::filesystem::types::HostDirectoryEntryStream for T
-where
-    T: WasiView,
-{
+impl wasi::filesystem::types::HostDirectoryEntryStream for dyn WasiView + '_ {
     async fn read_directory_entry(
         &mut self,
         self_: Resource<DirectoryEntryStream>,
     ) -> wasmtime::Result<Result<Option<DirectoryEntry>, FsErrorCode>> {
         convert_result(
-            <T as latest::filesystem::types::HostDirectoryEntryStream>::read_directory_entry(
-                self, self_,
-            )
-            .await
-            .map(|e| e.map(DirectoryEntry::from)),
+            latest::filesystem::types::HostDirectoryEntryStream::read_directory_entry(self, self_)
+                .await
+                .map(|e| e.map(DirectoryEntry::from)),
         )
     }
 
     fn drop(&mut self, rep: Resource<DirectoryEntryStream>) -> wasmtime::Result<()> {
-        <T as latest::filesystem::types::HostDirectoryEntryStream>::drop(self, rep)
+        latest::filesystem::types::HostDirectoryEntryStream::drop(self, rep)
     }
 }
 
-impl<T> wasi::filesystem::preopens::Host for T
-where
-    T: WasiView,
-{
+impl wasi::filesystem::preopens::Host for dyn WasiView + '_ {
     fn get_directories(&mut self) -> wasmtime::Result<Vec<(Resource<Descriptor>, String)>> {
-        <T as latest::filesystem::preopens::Host>::get_directories(self)
+        latest::filesystem::preopens::Host::get_directories(self)
     }
 }
 
 #[async_trait]
-impl<T> wasi::io::poll::Host for T
-where
-    T: WasiView,
-{
+impl wasi::io::poll::Host for dyn WasiView + '_ {
     async fn poll(&mut self, list: Vec<Resource<Pollable>>) -> wasmtime::Result<Vec<u32>> {
-        <T as latest::io::poll::Host>::poll(self, list).await
+        latest::io::poll::Host::poll(self, list).await
     }
 }
 
 #[async_trait]
-impl<T> wasi::io::poll::HostPollable for T
-where
-    T: WasiView,
-{
+impl wasi::io::poll::HostPollable for dyn WasiView + '_ {
     async fn block(&mut self, rep: Resource<Pollable>) -> wasmtime::Result<()> {
-        <T as latest::io::poll::HostPollable>::block(self, rep).await
+        latest::io::poll::HostPollable::block(self, rep).await
     }
 
     async fn ready(&mut self, rep: Resource<Pollable>) -> wasmtime::Result<bool> {
-        <T as latest::io::poll::HostPollable>::ready(self, rep).await
+        latest::io::poll::HostPollable::ready(self, rep).await
     }
 
     fn drop(&mut self, rep: Resource<Pollable>) -> wasmtime::Result<()> {
-        <T as latest::io::poll::HostPollable>::drop(self, rep)
+        latest::io::poll::HostPollable::drop(self, rep)
     }
 }
 
-impl<T> wasi::io::error::Host for T where T: WasiView {}
+impl wasi::io::error::Host for dyn WasiView + '_ {}
 
-impl<T> wasi::io::error::HostError for T
-where
-    T: WasiView,
-{
+impl wasi::io::error::HostError for dyn WasiView + '_ {
     fn to_debug_string(&mut self, self_: Resource<IoError>) -> wasmtime::Result<String> {
-        <T as latest::io::error::HostError>::to_debug_string(self, self_)
+        latest::io::error::HostError::to_debug_string(self, self_)
     }
 
     fn drop(&mut self, rep: Resource<IoError>) -> wasmtime::Result<()> {
-        <T as latest::io::error::HostError>::drop(self, rep)
+        latest::io::error::HostError::drop(self, rep)
     }
 }
 
@@ -683,19 +638,16 @@ where
     }
 }
 
-impl<T> wasi::io::streams::Host for T where T: WasiView {}
+impl wasi::io::streams::Host for dyn WasiView + '_ {}
 
 #[async_trait]
-impl<T> wasi::io::streams::HostInputStream for T
-where
-    T: WasiView,
-{
+impl wasi::io::streams::HostInputStream for dyn WasiView + '_ {
     async fn read(
         &mut self,
         self_: Resource<InputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<Vec<u8>, StreamError>> {
-        let result = <T as latest::io::streams::HostInputStream>::read(self, self_, len).await;
+        let result = latest::io::streams::HostInputStream::read(self, self_, len).await;
         convert_stream_result(self, result)
     }
 
@@ -704,8 +656,7 @@ where
         self_: Resource<InputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<Vec<u8>, StreamError>> {
-        let result =
-            <T as latest::io::streams::HostInputStream>::blocking_read(self, self_, len).await;
+        let result = latest::io::streams::HostInputStream::blocking_read(self, self_, len).await;
         convert_stream_result(self, result)
     }
 
@@ -714,7 +665,7 @@ where
         self_: Resource<InputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<u64, StreamError>> {
-        let result = <T as latest::io::streams::HostInputStream>::skip(self, self_, len).await;
+        let result = latest::io::streams::HostInputStream::skip(self, self_, len).await;
         convert_stream_result(self, result)
     }
 
@@ -723,30 +674,26 @@ where
         self_: Resource<InputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<u64, StreamError>> {
-        let result =
-            <T as latest::io::streams::HostInputStream>::blocking_skip(self, self_, len).await;
+        let result = latest::io::streams::HostInputStream::blocking_skip(self, self_, len).await;
         convert_stream_result(self, result)
     }
 
     fn subscribe(&mut self, self_: Resource<InputStream>) -> wasmtime::Result<Resource<Pollable>> {
-        <T as latest::io::streams::HostInputStream>::subscribe(self, self_)
+        latest::io::streams::HostInputStream::subscribe(self, self_)
     }
 
     fn drop(&mut self, rep: Resource<InputStream>) -> wasmtime::Result<()> {
-        <T as latest::io::streams::HostInputStream>::drop(self, rep)
+        latest::io::streams::HostInputStream::drop(self, rep)
     }
 }
 
 #[async_trait]
-impl<T> wasi::io::streams::HostOutputStream for T
-where
-    T: WasiView,
-{
+impl wasi::io::streams::HostOutputStream for dyn WasiView + '_ {
     fn check_write(
         &mut self,
         self_: Resource<OutputStream>,
     ) -> wasmtime::Result<Result<u64, StreamError>> {
-        let result = <T as latest::io::streams::HostOutputStream>::check_write(self, self_);
+        let result = latest::io::streams::HostOutputStream::check_write(self, self_);
         convert_stream_result(self, result)
     }
 
@@ -755,7 +702,7 @@ where
         self_: Resource<OutputStream>,
         contents: Vec<u8>,
     ) -> wasmtime::Result<Result<(), StreamError>> {
-        let result = <T as latest::io::streams::HostOutputStream>::write(self, self_, contents);
+        let result = latest::io::streams::HostOutputStream::write(self, self_, contents);
         convert_stream_result(self, result)
     }
 
@@ -764,10 +711,9 @@ where
         self_: Resource<OutputStream>,
         contents: Vec<u8>,
     ) -> wasmtime::Result<Result<(), StreamError>> {
-        let result = <T as latest::io::streams::HostOutputStream>::blocking_write_and_flush(
-            self, self_, contents,
-        )
-        .await;
+        let result =
+            latest::io::streams::HostOutputStream::blocking_write_and_flush(self, self_, contents)
+                .await;
         convert_stream_result(self, result)
     }
 
@@ -775,7 +721,7 @@ where
         &mut self,
         self_: Resource<OutputStream>,
     ) -> wasmtime::Result<Result<(), StreamError>> {
-        let result = <T as latest::io::streams::HostOutputStream>::flush(self, self_);
+        let result = latest::io::streams::HostOutputStream::flush(self, self_);
         convert_stream_result(self, result)
     }
 
@@ -783,13 +729,12 @@ where
         &mut self,
         self_: Resource<OutputStream>,
     ) -> wasmtime::Result<Result<(), StreamError>> {
-        let result =
-            <T as latest::io::streams::HostOutputStream>::blocking_flush(self, self_).await;
+        let result = latest::io::streams::HostOutputStream::blocking_flush(self, self_).await;
         convert_stream_result(self, result)
     }
 
     fn subscribe(&mut self, self_: Resource<OutputStream>) -> wasmtime::Result<Resource<Pollable>> {
-        <T as latest::io::streams::HostOutputStream>::subscribe(self, self_)
+        latest::io::streams::HostOutputStream::subscribe(self, self_)
     }
 
     fn write_zeroes(
@@ -797,7 +742,7 @@ where
         self_: Resource<OutputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<(), StreamError>> {
-        let result = <T as latest::io::streams::HostOutputStream>::write_zeroes(self, self_, len);
+        let result = latest::io::streams::HostOutputStream::write_zeroes(self, self_, len);
         convert_stream_result(self, result)
     }
 
@@ -806,7 +751,7 @@ where
         self_: Resource<OutputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<(), StreamError>> {
-        let result = <T as latest::io::streams::HostOutputStream>::blocking_write_zeroes_and_flush(
+        let result = latest::io::streams::HostOutputStream::blocking_write_zeroes_and_flush(
             self, self_, len,
         )
         .await;
@@ -819,8 +764,7 @@ where
         src: Resource<InputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<u64, StreamError>> {
-        let result =
-            <T as latest::io::streams::HostOutputStream>::splice(self, self_, src, len).await;
+        let result = latest::io::streams::HostOutputStream::splice(self, self_, src, len).await;
         convert_stream_result(self, result)
     }
 
@@ -831,194 +775,158 @@ where
         len: u64,
     ) -> wasmtime::Result<Result<u64, StreamError>> {
         let result =
-            <T as latest::io::streams::HostOutputStream>::blocking_splice(self, self_, src, len)
-                .await;
+            latest::io::streams::HostOutputStream::blocking_splice(self, self_, src, len).await;
         convert_stream_result(self, result)
     }
 
     fn drop(&mut self, rep: Resource<OutputStream>) -> wasmtime::Result<()> {
-        <T as latest::io::streams::HostOutputStream>::drop(self, rep)
+        latest::io::streams::HostOutputStream::drop(self, rep)
     }
 }
 
-impl<T> wasi::random::random::Host for T
-where
-    T: WasiView,
-{
+impl wasi::random::random::Host for dyn WasiView + '_ {
     fn get_random_bytes(&mut self, len: u64) -> wasmtime::Result<Vec<u8>> {
-        <T as latest::random::random::Host>::get_random_bytes(self, len)
+        latest::random::random::Host::get_random_bytes(self, len)
     }
 
     fn get_random_u64(&mut self) -> wasmtime::Result<u64> {
-        <T as latest::random::random::Host>::get_random_u64(self)
+        latest::random::random::Host::get_random_u64(self)
     }
 }
 
-impl<T> wasi::random::insecure::Host for T
-where
-    T: WasiView,
-{
+impl wasi::random::insecure::Host for dyn WasiView + '_ {
     fn get_insecure_random_bytes(&mut self, len: u64) -> wasmtime::Result<Vec<u8>> {
-        <T as latest::random::insecure::Host>::get_insecure_random_bytes(self, len)
+        latest::random::insecure::Host::get_insecure_random_bytes(self, len)
     }
 
     fn get_insecure_random_u64(&mut self) -> wasmtime::Result<u64> {
-        <T as latest::random::insecure::Host>::get_insecure_random_u64(self)
+        latest::random::insecure::Host::get_insecure_random_u64(self)
     }
 }
 
-impl<T> wasi::random::insecure_seed::Host for T
-where
-    T: WasiView,
-{
+impl wasi::random::insecure_seed::Host for dyn WasiView + '_ {
     fn insecure_seed(&mut self) -> wasmtime::Result<(u64, u64)> {
-        <T as latest::random::insecure_seed::Host>::insecure_seed(self)
+        latest::random::insecure_seed::Host::insecure_seed(self)
     }
 }
 
-impl<T> wasi::cli::exit::Host for T
-where
-    T: WasiView,
-{
+impl wasi::cli::exit::Host for dyn WasiView + '_ {
     fn exit(&mut self, status: Result<(), ()>) -> wasmtime::Result<()> {
-        <T as latest::cli::exit::Host>::exit(self, status)
+        latest::cli::exit::Host::exit(self, status)
     }
 }
 
-impl<T> wasi::cli::environment::Host for T
-where
-    T: WasiView,
-{
+impl wasi::cli::environment::Host for dyn WasiView + '_ {
     fn get_environment(&mut self) -> wasmtime::Result<Vec<(String, String)>> {
-        <T as latest::cli::environment::Host>::get_environment(self)
+        latest::cli::environment::Host::get_environment(self)
     }
 
     fn get_arguments(&mut self) -> wasmtime::Result<Vec<String>> {
-        <T as latest::cli::environment::Host>::get_arguments(self)
+        latest::cli::environment::Host::get_arguments(self)
     }
 
     fn initial_cwd(&mut self) -> wasmtime::Result<Option<String>> {
-        <T as latest::cli::environment::Host>::initial_cwd(self)
+        latest::cli::environment::Host::initial_cwd(self)
     }
 }
 
-impl<T> wasi::cli::stdin::Host for T
-where
-    T: WasiView,
-{
+impl wasi::cli::stdin::Host for dyn WasiView + '_ {
     fn get_stdin(&mut self) -> wasmtime::Result<Resource<InputStream>> {
-        <T as latest::cli::stdin::Host>::get_stdin(self)
+        latest::cli::stdin::Host::get_stdin(self)
     }
 }
 
-impl<T> wasi::cli::stdout::Host for T
-where
-    T: WasiView,
-{
+impl wasi::cli::stdout::Host for dyn WasiView + '_ {
     fn get_stdout(&mut self) -> wasmtime::Result<Resource<OutputStream>> {
-        <T as latest::cli::stdout::Host>::get_stdout(self)
+        latest::cli::stdout::Host::get_stdout(self)
     }
 }
 
-impl<T> wasi::cli::stderr::Host for T
-where
-    T: WasiView,
-{
+impl wasi::cli::stderr::Host for dyn WasiView + '_ {
     fn get_stderr(&mut self) -> wasmtime::Result<Resource<OutputStream>> {
-        <T as latest::cli::stderr::Host>::get_stderr(self)
+        latest::cli::stderr::Host::get_stderr(self)
     }
 }
 
-impl<T> wasi::cli::terminal_stdin::Host for T
-where
-    T: WasiView,
-{
+impl wasi::cli::terminal_stdin::Host for dyn WasiView + '_ {
     fn get_terminal_stdin(&mut self) -> wasmtime::Result<Option<Resource<TerminalInput>>> {
-        <T as latest::cli::terminal_stdin::Host>::get_terminal_stdin(self)
+        latest::cli::terminal_stdin::Host::get_terminal_stdin(self)
     }
 }
 
-impl<T> wasi::cli::terminal_stdout::Host for T
-where
-    T: WasiView,
-{
+impl wasi::cli::terminal_stdout::Host for dyn WasiView + '_ {
     fn get_terminal_stdout(&mut self) -> wasmtime::Result<Option<Resource<TerminalOutput>>> {
-        <T as latest::cli::terminal_stdout::Host>::get_terminal_stdout(self)
+        latest::cli::terminal_stdout::Host::get_terminal_stdout(self)
     }
 }
 
-impl<T> wasi::cli::terminal_stderr::Host for T
-where
-    T: WasiView,
-{
+impl wasi::cli::terminal_stderr::Host for dyn WasiView + '_ {
     fn get_terminal_stderr(&mut self) -> wasmtime::Result<Option<Resource<TerminalOutput>>> {
-        <T as latest::cli::terminal_stderr::Host>::get_terminal_stderr(self)
+        latest::cli::terminal_stderr::Host::get_terminal_stderr(self)
     }
 }
 
-impl<T> wasi::cli::terminal_input::Host for T where T: WasiView {}
+impl wasi::cli::terminal_input::Host for dyn WasiView + '_ {}
 
-impl<T> wasi::cli::terminal_input::HostTerminalInput for T
-where
-    T: WasiView,
-{
+impl wasi::cli::terminal_input::HostTerminalInput for dyn WasiView + '_ {
     fn drop(&mut self, rep: Resource<TerminalInput>) -> wasmtime::Result<()> {
-        <T as latest::cli::terminal_input::HostTerminalInput>::drop(self, rep)
+        latest::cli::terminal_input::HostTerminalInput::drop(self, rep)
     }
 }
 
-impl<T> wasi::cli::terminal_output::Host for T where T: WasiView {}
+impl wasi::cli::terminal_output::Host for dyn WasiView + '_ {}
 
-impl<T> wasi::cli::terminal_output::HostTerminalOutput for T
-where
-    T: WasiView,
-{
+impl wasi::cli::terminal_output::HostTerminalOutput for dyn WasiView + '_ {
     fn drop(&mut self, rep: Resource<TerminalOutput>) -> wasmtime::Result<()> {
-        <T as latest::cli::terminal_output::HostTerminalOutput>::drop(self, rep)
+        latest::cli::terminal_output::HostTerminalOutput::drop(self, rep)
     }
 }
 
-impl<T> wasi::sockets::tcp::Host for T where T: WasiView {}
+impl wasi::sockets::tcp::Host for dyn WasiView + '_ {}
 
-impl<T> wasi::sockets::tcp::HostTcpSocket for T
-where
-    T: WasiView,
-{
-    fn start_bind(
+#[async_trait]
+impl wasi::sockets::tcp::HostTcpSocket for dyn WasiView + '_ {
+    async fn start_bind(
         &mut self,
         self_: Resource<TcpSocket>,
         network: Resource<Network>,
         local_address: IpSocketAddress,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::start_bind(
-            self,
-            self_,
-            network,
-            local_address.into(),
-        ))
+        convert_result(
+            latest::sockets::tcp::HostTcpSocket::start_bind(
+                self,
+                self_,
+                network,
+                local_address.into(),
+            )
+            .await,
+        )
     }
 
     fn finish_bind(
         &mut self,
         self_: Resource<TcpSocket>,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::finish_bind(
+        convert_result(latest::sockets::tcp::HostTcpSocket::finish_bind(
             self, self_,
         ))
     }
 
-    fn start_connect(
+    async fn start_connect(
         &mut self,
         self_: Resource<TcpSocket>,
         network: Resource<Network>,
         remote_address: IpSocketAddress,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::start_connect(
-            self,
-            self_,
-            network,
-            remote_address.into(),
-        ))
+        convert_result(
+            latest::sockets::tcp::HostTcpSocket::start_connect(
+                self,
+                self_,
+                network,
+                remote_address.into(),
+            )
+            .await,
+        )
     }
 
     fn finish_connect(
@@ -1026,7 +934,7 @@ where
         self_: Resource<TcpSocket>,
     ) -> wasmtime::Result<Result<(Resource<InputStream>, Resource<OutputStream>), SocketErrorCode>>
     {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::finish_connect(
+        convert_result(latest::sockets::tcp::HostTcpSocket::finish_connect(
             self, self_,
         ))
     }
@@ -1035,7 +943,7 @@ where
         &mut self,
         self_: Resource<TcpSocket>,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::start_listen(
+        convert_result(latest::sockets::tcp::HostTcpSocket::start_listen(
             self, self_,
         ))
     }
@@ -1044,7 +952,7 @@ where
         &mut self,
         self_: Resource<TcpSocket>,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::finish_listen(
+        convert_result(latest::sockets::tcp::HostTcpSocket::finish_listen(
             self, self_,
         ))
     }
@@ -1062,16 +970,14 @@ where
             SocketErrorCode,
         >,
     > {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::accept(
-            self, self_,
-        ))
+        convert_result(latest::sockets::tcp::HostTcpSocket::accept(self, self_))
     }
 
     fn local_address(
         &mut self,
         self_: Resource<TcpSocket>,
     ) -> wasmtime::Result<Result<IpSocketAddress, SocketErrorCode>> {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::local_address(
+        convert_result(latest::sockets::tcp::HostTcpSocket::local_address(
             self, self_,
         ))
     }
@@ -1080,13 +986,13 @@ where
         &mut self,
         self_: Resource<TcpSocket>,
     ) -> wasmtime::Result<Result<IpSocketAddress, SocketErrorCode>> {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::remote_address(
+        convert_result(latest::sockets::tcp::HostTcpSocket::remote_address(
             self, self_,
         ))
     }
 
     fn address_family(&mut self, self_: Resource<TcpSocket>) -> wasmtime::Result<IpAddressFamily> {
-        <T as latest::sockets::tcp::HostTcpSocket>::address_family(self, self_).map(|e| e.into())
+        latest::sockets::tcp::HostTcpSocket::address_family(self, self_).map(|e| e.into())
     }
 
     fn ipv6_only(
@@ -1110,19 +1016,21 @@ where
         value: u64,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
         convert_result(
-            <T as latest::sockets::tcp::HostTcpSocket>::set_listen_backlog_size(self, self_, value),
+            latest::sockets::tcp::HostTcpSocket::set_listen_backlog_size(self, self_, value),
         )
     }
 
     fn is_listening(&mut self, self_: Resource<TcpSocket>) -> wasmtime::Result<bool> {
-        <T as latest::sockets::tcp::HostTcpSocket>::is_listening(self, self_)
+        latest::sockets::tcp::HostTcpSocket::is_listening(self, self_)
     }
 
     fn keep_alive_enabled(
         &mut self,
         self_: Resource<TcpSocket>,
     ) -> wasmtime::Result<Result<bool, SocketErrorCode>> {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::keep_alive_enabled(self, self_))
+        convert_result(latest::sockets::tcp::HostTcpSocket::keep_alive_enabled(
+            self, self_,
+        ))
     }
 
     fn set_keep_alive_enabled(
@@ -1130,18 +1038,18 @@ where
         self_: Resource<TcpSocket>,
         value: bool,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        convert_result(
-            <T as latest::sockets::tcp::HostTcpSocket>::set_keep_alive_enabled(self, self_, value),
-        )
+        convert_result(latest::sockets::tcp::HostTcpSocket::set_keep_alive_enabled(
+            self, self_, value,
+        ))
     }
 
     fn keep_alive_idle_time(
         &mut self,
         self_: Resource<TcpSocket>,
     ) -> wasmtime::Result<Result<Duration, SocketErrorCode>> {
-        convert_result(
-            <T as latest::sockets::tcp::HostTcpSocket>::keep_alive_idle_time(self, self_),
-        )
+        convert_result(latest::sockets::tcp::HostTcpSocket::keep_alive_idle_time(
+            self, self_,
+        ))
     }
 
     fn set_keep_alive_idle_time(
@@ -1150,9 +1058,7 @@ where
         value: Duration,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
         convert_result(
-            <T as latest::sockets::tcp::HostTcpSocket>::set_keep_alive_idle_time(
-                self, self_, value,
-            ),
+            latest::sockets::tcp::HostTcpSocket::set_keep_alive_idle_time(self, self_, value),
         )
     }
 
@@ -1160,7 +1066,9 @@ where
         &mut self,
         self_: Resource<TcpSocket>,
     ) -> wasmtime::Result<Result<Duration, SocketErrorCode>> {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::keep_alive_interval(self, self_))
+        convert_result(latest::sockets::tcp::HostTcpSocket::keep_alive_interval(
+            self, self_,
+        ))
     }
 
     fn set_keep_alive_interval(
@@ -1169,7 +1077,7 @@ where
         value: Duration,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
         convert_result(
-            <T as latest::sockets::tcp::HostTcpSocket>::set_keep_alive_interval(self, self_, value),
+            latest::sockets::tcp::HostTcpSocket::set_keep_alive_interval(self, self_, value),
         )
     }
 
@@ -1177,7 +1085,9 @@ where
         &mut self,
         self_: Resource<TcpSocket>,
     ) -> wasmtime::Result<Result<u32, SocketErrorCode>> {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::keep_alive_count(self, self_))
+        convert_result(latest::sockets::tcp::HostTcpSocket::keep_alive_count(
+            self, self_,
+        ))
     }
 
     fn set_keep_alive_count(
@@ -1185,18 +1095,16 @@ where
         self_: Resource<TcpSocket>,
         value: u32,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        convert_result(
-            <T as latest::sockets::tcp::HostTcpSocket>::set_keep_alive_count(self, self_, value),
-        )
+        convert_result(latest::sockets::tcp::HostTcpSocket::set_keep_alive_count(
+            self, self_, value,
+        ))
     }
 
     fn hop_limit(
         &mut self,
         self_: Resource<TcpSocket>,
     ) -> wasmtime::Result<Result<u8, SocketErrorCode>> {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::hop_limit(
-            self, self_,
-        ))
+        convert_result(latest::sockets::tcp::HostTcpSocket::hop_limit(self, self_))
     }
 
     fn set_hop_limit(
@@ -1204,7 +1112,7 @@ where
         self_: Resource<TcpSocket>,
         value: u8,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::set_hop_limit(
+        convert_result(latest::sockets::tcp::HostTcpSocket::set_hop_limit(
             self, self_, value,
         ))
     }
@@ -1213,7 +1121,9 @@ where
         &mut self,
         self_: Resource<TcpSocket>,
     ) -> wasmtime::Result<Result<u64, SocketErrorCode>> {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::receive_buffer_size(self, self_))
+        convert_result(latest::sockets::tcp::HostTcpSocket::receive_buffer_size(
+            self, self_,
+        ))
     }
 
     fn set_receive_buffer_size(
@@ -1222,7 +1132,7 @@ where
         value: u64,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
         convert_result(
-            <T as latest::sockets::tcp::HostTcpSocket>::set_receive_buffer_size(self, self_, value),
+            latest::sockets::tcp::HostTcpSocket::set_receive_buffer_size(self, self_, value),
         )
     }
 
@@ -1230,7 +1140,9 @@ where
         &mut self,
         self_: Resource<TcpSocket>,
     ) -> wasmtime::Result<Result<u64, SocketErrorCode>> {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::send_buffer_size(self, self_))
+        convert_result(latest::sockets::tcp::HostTcpSocket::send_buffer_size(
+            self, self_,
+        ))
     }
 
     fn set_send_buffer_size(
@@ -1238,13 +1150,13 @@ where
         self_: Resource<TcpSocket>,
         value: u64,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        convert_result(
-            <T as latest::sockets::tcp::HostTcpSocket>::set_send_buffer_size(self, self_, value),
-        )
+        convert_result(latest::sockets::tcp::HostTcpSocket::set_send_buffer_size(
+            self, self_, value,
+        ))
     }
 
     fn subscribe(&mut self, self_: Resource<TcpSocket>) -> wasmtime::Result<Resource<Pollable>> {
-        <T as latest::sockets::tcp::HostTcpSocket>::subscribe(self, self_)
+        latest::sockets::tcp::HostTcpSocket::subscribe(self, self_)
     }
 
     fn shutdown(
@@ -1252,7 +1164,7 @@ where
         self_: Resource<TcpSocket>,
         shutdown_type: ShutdownType,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        convert_result(<T as latest::sockets::tcp::HostTcpSocket>::shutdown(
+        convert_result(latest::sockets::tcp::HostTcpSocket::shutdown(
             self,
             self_,
             shutdown_type.into(),
@@ -1260,52 +1172,48 @@ where
     }
 
     fn drop(&mut self, rep: Resource<TcpSocket>) -> wasmtime::Result<()> {
-        <T as latest::sockets::tcp::HostTcpSocket>::drop(self, rep)
+        latest::sockets::tcp::HostTcpSocket::drop(self, rep)
     }
 }
 
-impl<T> wasi::sockets::tcp_create_socket::Host for T
-where
-    T: WasiView,
-{
+impl wasi::sockets::tcp_create_socket::Host for dyn WasiView + '_ {
     fn create_tcp_socket(
         &mut self,
         address_family: IpAddressFamily,
     ) -> wasmtime::Result<Result<Resource<TcpSocket>, SocketErrorCode>> {
-        convert_result(
-            <T as latest::sockets::tcp_create_socket::Host>::create_tcp_socket(
-                self,
-                address_family.into(),
-            ),
-        )
+        convert_result(latest::sockets::tcp_create_socket::Host::create_tcp_socket(
+            self,
+            address_family.into(),
+        ))
     }
 }
 
-impl<T> wasi::sockets::udp::Host for T where T: WasiView {}
+impl wasi::sockets::udp::Host for dyn WasiView + '_ {}
 
-impl<T> wasi::sockets::udp::HostUdpSocket for T
-where
-    T: WasiView,
-{
-    fn start_bind(
+#[async_trait]
+impl wasi::sockets::udp::HostUdpSocket for dyn WasiView + '_ {
+    async fn start_bind(
         &mut self,
         self_: Resource<UdpSocket>,
         network: Resource<Network>,
         local_address: IpSocketAddress,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        convert_result(<T as latest::sockets::udp::HostUdpSocket>::start_bind(
-            self,
-            self_,
-            network,
-            local_address.into(),
-        ))
+        convert_result(
+            latest::sockets::udp::HostUdpSocket::start_bind(
+                self,
+                self_,
+                network,
+                local_address.into(),
+            )
+            .await,
+        )
     }
 
     fn finish_bind(
         &mut self,
         self_: Resource<UdpSocket>,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        convert_result(<T as latest::sockets::udp::HostUdpSocket>::finish_bind(
+        convert_result(latest::sockets::udp::HostUdpSocket::finish_bind(
             self, self_,
         ))
     }
@@ -1314,7 +1222,7 @@ where
         &mut self,
         self_: Resource<UdpSocket>,
     ) -> wasmtime::Result<Result<IpSocketAddress, SocketErrorCode>> {
-        convert_result(<T as latest::sockets::udp::HostUdpSocket>::local_address(
+        convert_result(latest::sockets::udp::HostUdpSocket::local_address(
             self, self_,
         ))
     }
@@ -1323,13 +1231,13 @@ where
         &mut self,
         self_: Resource<UdpSocket>,
     ) -> wasmtime::Result<Result<IpSocketAddress, SocketErrorCode>> {
-        convert_result(<T as latest::sockets::udp::HostUdpSocket>::remote_address(
+        convert_result(latest::sockets::udp::HostUdpSocket::remote_address(
             self, self_,
         ))
     }
 
     fn address_family(&mut self, self_: Resource<UdpSocket>) -> wasmtime::Result<IpAddressFamily> {
-        <T as latest::sockets::udp::HostUdpSocket>::address_family(self, self_).map(|e| e.into())
+        latest::sockets::udp::HostUdpSocket::address_family(self, self_).map(|e| e.into())
     }
 
     fn ipv6_only(
@@ -1351,7 +1259,9 @@ where
         &mut self,
         self_: Resource<UdpSocket>,
     ) -> wasmtime::Result<Result<u8, SocketErrorCode>> {
-        convert_result(<T as latest::sockets::udp::HostUdpSocket>::unicast_hop_limit(self, self_))
+        convert_result(latest::sockets::udp::HostUdpSocket::unicast_hop_limit(
+            self, self_,
+        ))
     }
 
     fn set_unicast_hop_limit(
@@ -1359,16 +1269,18 @@ where
         self_: Resource<UdpSocket>,
         value: u8,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        convert_result(
-            <T as latest::sockets::udp::HostUdpSocket>::set_unicast_hop_limit(self, self_, value),
-        )
+        convert_result(latest::sockets::udp::HostUdpSocket::set_unicast_hop_limit(
+            self, self_, value,
+        ))
     }
 
     fn receive_buffer_size(
         &mut self,
         self_: Resource<UdpSocket>,
     ) -> wasmtime::Result<Result<u64, SocketErrorCode>> {
-        convert_result(<T as latest::sockets::udp::HostUdpSocket>::receive_buffer_size(self, self_))
+        convert_result(latest::sockets::udp::HostUdpSocket::receive_buffer_size(
+            self, self_,
+        ))
     }
 
     fn set_receive_buffer_size(
@@ -1377,7 +1289,7 @@ where
         value: u64,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
         convert_result(
-            <T as latest::sockets::udp::HostUdpSocket>::set_receive_buffer_size(self, self_, value),
+            latest::sockets::udp::HostUdpSocket::set_receive_buffer_size(self, self_, value),
         )
     }
 
@@ -1385,7 +1297,9 @@ where
         &mut self,
         self_: Resource<UdpSocket>,
     ) -> wasmtime::Result<Result<u64, SocketErrorCode>> {
-        convert_result(<T as latest::sockets::udp::HostUdpSocket>::send_buffer_size(self, self_))
+        convert_result(latest::sockets::udp::HostUdpSocket::send_buffer_size(
+            self, self_,
+        ))
     }
 
     fn set_send_buffer_size(
@@ -1393,12 +1307,12 @@ where
         self_: Resource<UdpSocket>,
         value: u64,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        convert_result(
-            <T as latest::sockets::udp::HostUdpSocket>::set_send_buffer_size(self, self_, value),
-        )
+        convert_result(latest::sockets::udp::HostUdpSocket::set_send_buffer_size(
+            self, self_, value,
+        ))
     }
 
-    fn stream(
+    async fn stream(
         &mut self,
         self_: Resource<UdpSocket>,
         remote_address: Option<IpSocketAddress>,
@@ -1411,46 +1325,46 @@ where
             SocketErrorCode,
         >,
     > {
-        convert_result(<T as latest::sockets::udp::HostUdpSocket>::stream(
-            self,
-            self_,
-            remote_address.map(|a| a.into()),
-        ))
+        convert_result(
+            latest::sockets::udp::HostUdpSocket::stream(
+                self,
+                self_,
+                remote_address.map(|a| a.into()),
+            )
+            .await,
+        )
     }
 
     fn subscribe(&mut self, self_: Resource<UdpSocket>) -> wasmtime::Result<Resource<Pollable>> {
-        <T as latest::sockets::udp::HostUdpSocket>::subscribe(self, self_)
+        latest::sockets::udp::HostUdpSocket::subscribe(self, self_)
     }
 
     fn drop(&mut self, rep: Resource<UdpSocket>) -> wasmtime::Result<()> {
-        <T as latest::sockets::udp::HostUdpSocket>::drop(self, rep)
+        latest::sockets::udp::HostUdpSocket::drop(self, rep)
     }
 }
 
-impl<T> wasi::sockets::udp::HostOutgoingDatagramStream for T
-where
-    T: WasiView,
-{
+#[async_trait]
+impl wasi::sockets::udp::HostOutgoingDatagramStream for dyn WasiView + '_ {
     fn check_send(
         &mut self,
         self_: Resource<OutgoingDatagramStream>,
     ) -> wasmtime::Result<Result<u64, SocketErrorCode>> {
-        convert_result(
-            <T as latest::sockets::udp::HostOutgoingDatagramStream>::check_send(self, self_),
-        )
+        convert_result(latest::sockets::udp::HostOutgoingDatagramStream::check_send(self, self_))
     }
 
-    fn send(
+    async fn send(
         &mut self,
         self_: Resource<OutgoingDatagramStream>,
         datagrams: Vec<OutgoingDatagram>,
     ) -> wasmtime::Result<Result<u64, SocketErrorCode>> {
         convert_result(
-            <T as latest::sockets::udp::HostOutgoingDatagramStream>::send(
+            latest::sockets::udp::HostOutgoingDatagramStream::send(
                 self,
                 self_,
                 datagrams.into_iter().map(|d| d.into()).collect(),
-            ),
+            )
+            .await,
         )
     }
 
@@ -1458,30 +1372,25 @@ where
         &mut self,
         self_: Resource<OutgoingDatagramStream>,
     ) -> wasmtime::Result<Resource<Pollable>> {
-        <T as latest::sockets::udp::HostOutgoingDatagramStream>::subscribe(self, self_)
+        latest::sockets::udp::HostOutgoingDatagramStream::subscribe(self, self_)
     }
 
     fn drop(&mut self, rep: Resource<OutgoingDatagramStream>) -> wasmtime::Result<()> {
-        <T as latest::sockets::udp::HostOutgoingDatagramStream>::drop(self, rep)
+        latest::sockets::udp::HostOutgoingDatagramStream::drop(self, rep)
     }
 }
 
-impl<T> wasi::sockets::udp::HostIncomingDatagramStream for T
-where
-    T: WasiView,
-{
+impl wasi::sockets::udp::HostIncomingDatagramStream for dyn WasiView + '_ {
     fn receive(
         &mut self,
         self_: Resource<IncomingDatagramStream>,
         max_results: u64,
     ) -> wasmtime::Result<Result<Vec<IncomingDatagram>, SocketErrorCode>> {
-        convert_result(
-            <T as latest::sockets::udp::HostIncomingDatagramStream>::receive(
-                self,
-                self_,
-                max_results,
-            ),
-        )
+        convert_result(latest::sockets::udp::HostIncomingDatagramStream::receive(
+            self,
+            self_,
+            max_results,
+        ))
         .map(|r| r.map(|r: Vec<_>| r.into_iter().map(|d| d.into()).collect()))
     }
 
@@ -1489,76 +1398,59 @@ where
         &mut self,
         self_: Resource<IncomingDatagramStream>,
     ) -> wasmtime::Result<Resource<Pollable>> {
-        <T as latest::sockets::udp::HostIncomingDatagramStream>::subscribe(self, self_)
+        latest::sockets::udp::HostIncomingDatagramStream::subscribe(self, self_)
     }
 
     fn drop(&mut self, rep: Resource<IncomingDatagramStream>) -> wasmtime::Result<()> {
-        <T as latest::sockets::udp::HostIncomingDatagramStream>::drop(self, rep)
+        latest::sockets::udp::HostIncomingDatagramStream::drop(self, rep)
     }
 }
 
-impl<T> wasi::sockets::udp_create_socket::Host for T
-where
-    T: WasiView,
-{
+impl wasi::sockets::udp_create_socket::Host for dyn WasiView + '_ {
     fn create_udp_socket(
         &mut self,
         address_family: IpAddressFamily,
     ) -> wasmtime::Result<Result<Resource<UdpSocket>, SocketErrorCode>> {
-        convert_result(
-            <T as latest::sockets::udp_create_socket::Host>::create_udp_socket(
-                self,
-                address_family.into(),
-            ),
-        )
+        convert_result(latest::sockets::udp_create_socket::Host::create_udp_socket(
+            self,
+            address_family.into(),
+        ))
     }
 }
 
-impl<T> wasi::sockets::instance_network::Host for T
-where
-    T: WasiView,
-{
+impl wasi::sockets::instance_network::Host for dyn WasiView + '_ {
     fn instance_network(&mut self) -> wasmtime::Result<Resource<Network>> {
-        <T as latest::sockets::instance_network::Host>::instance_network(self)
+        latest::sockets::instance_network::Host::instance_network(self)
     }
 }
 
-impl<T> wasi::sockets::network::Host for T where T: WasiView {}
+impl wasi::sockets::network::Host for dyn WasiView + '_ {}
 
-impl<T> wasi::sockets::network::HostNetwork for T
-where
-    T: WasiView,
-{
+impl wasi::sockets::network::HostNetwork for dyn WasiView + '_ {
     fn drop(&mut self, rep: Resource<Network>) -> wasmtime::Result<()> {
-        <T as latest::sockets::network::HostNetwork>::drop(self, rep)
+        latest::sockets::network::HostNetwork::drop(self, rep)
     }
 }
 
-impl<T> wasi::sockets::ip_name_lookup::Host for T
-where
-    T: WasiView,
-{
+impl wasi::sockets::ip_name_lookup::Host for dyn WasiView + '_ {
     fn resolve_addresses(
         &mut self,
         network: Resource<Network>,
         name: String,
     ) -> wasmtime::Result<Result<Resource<ResolveAddressStream>, SocketErrorCode>> {
-        convert_result(
-            <T as latest::sockets::ip_name_lookup::Host>::resolve_addresses(self, network, name),
-        )
+        convert_result(latest::sockets::ip_name_lookup::Host::resolve_addresses(
+            self, network, name,
+        ))
     }
 }
 
-impl<T> wasi::sockets::ip_name_lookup::HostResolveAddressStream for T
-where
-    T: WasiView,
-{
+impl wasi::sockets::ip_name_lookup::HostResolveAddressStream for dyn WasiView + '_ {
     fn resolve_next_address(
         &mut self,
         self_: Resource<ResolveAddressStream>,
     ) -> wasmtime::Result<Result<Option<IpAddress>, SocketErrorCode>> {
         convert_result(
-            <T as latest::sockets::ip_name_lookup::HostResolveAddressStream>::resolve_next_address(
+            latest::sockets::ip_name_lookup::HostResolveAddressStream::resolve_next_address(
                 self, self_,
             )
             .map(|e| e.map(|e| e.into())),
@@ -1569,39 +1461,33 @@ where
         &mut self,
         self_: Resource<ResolveAddressStream>,
     ) -> wasmtime::Result<Resource<Pollable>> {
-        <T as latest::sockets::ip_name_lookup::HostResolveAddressStream>::subscribe(self, self_)
+        latest::sockets::ip_name_lookup::HostResolveAddressStream::subscribe(self, self_)
     }
 
     fn drop(&mut self, rep: Resource<ResolveAddressStream>) -> wasmtime::Result<()> {
-        <T as latest::sockets::ip_name_lookup::HostResolveAddressStream>::drop(self, rep)
+        latest::sockets::ip_name_lookup::HostResolveAddressStream::drop(self, rep)
     }
 }
 
-impl<T> wasi::http::types::Host for T
-where
-    T: WasiHttpView + Send,
-{
+impl wasi::http::types::Host for dyn WasiHttpView + '_ {
     fn http_error_code(
         &mut self,
         error: Resource<IoError>,
     ) -> wasmtime::Result<Option<HttpErrorCode>> {
-        <T as latest::http::types::Host>::http_error_code(self, error).map(|e| e.map(|e| e.into()))
+        latest::http::types::Host::http_error_code(self, error).map(|e| e.map(|e| e.into()))
     }
 }
 
-impl<T> wasi::http::types::HostRequestOptions for T
-where
-    T: WasiHttpView + Send,
-{
+impl wasi::http::types::HostRequestOptions for dyn WasiHttpView + '_ {
     fn new(&mut self) -> wasmtime::Result<Resource<RequestOptions>> {
-        <T as latest::http::types::HostRequestOptions>::new(self)
+        latest::http::types::HostRequestOptions::new(self)
     }
 
     fn connect_timeout_ms(
         &mut self,
         self_: Resource<RequestOptions>,
     ) -> wasmtime::Result<Option<u64>> {
-        <T as latest::http::types::HostRequestOptions>::connect_timeout(self, self_)
+        latest::http::types::HostRequestOptions::connect_timeout(self, self_)
     }
 
     fn set_connect_timeout_ms(
@@ -1609,14 +1495,14 @@ where
         self_: Resource<RequestOptions>,
         duration: Option<u64>,
     ) -> wasmtime::Result<Result<(), ()>> {
-        <T as latest::http::types::HostRequestOptions>::set_connect_timeout(self, self_, duration)
+        latest::http::types::HostRequestOptions::set_connect_timeout(self, self_, duration)
     }
 
     fn first_byte_timeout_ms(
         &mut self,
         self_: Resource<RequestOptions>,
     ) -> wasmtime::Result<Option<u64>> {
-        <T as latest::http::types::HostRequestOptions>::first_byte_timeout(self, self_)
+        latest::http::types::HostRequestOptions::first_byte_timeout(self, self_)
     }
 
     fn set_first_byte_timeout_ms(
@@ -1624,16 +1510,14 @@ where
         self_: Resource<RequestOptions>,
         duration: Option<u64>,
     ) -> wasmtime::Result<Result<(), ()>> {
-        <T as latest::http::types::HostRequestOptions>::set_first_byte_timeout(
-            self, self_, duration,
-        )
+        latest::http::types::HostRequestOptions::set_first_byte_timeout(self, self_, duration)
     }
 
     fn between_bytes_timeout_ms(
         &mut self,
         self_: Resource<RequestOptions>,
     ) -> wasmtime::Result<Option<u64>> {
-        <T as latest::http::types::HostRequestOptions>::between_bytes_timeout(self, self_)
+        latest::http::types::HostRequestOptions::between_bytes_timeout(self, self_)
     }
 
     fn set_between_bytes_timeout_ms(
@@ -1641,34 +1525,28 @@ where
         self_: Resource<RequestOptions>,
         duration: Option<u64>,
     ) -> wasmtime::Result<Result<(), ()>> {
-        <T as latest::http::types::HostRequestOptions>::set_between_bytes_timeout(
-            self, self_, duration,
-        )
+        latest::http::types::HostRequestOptions::set_between_bytes_timeout(self, self_, duration)
     }
 
     fn drop(&mut self, self_: Resource<RequestOptions>) -> wasmtime::Result<()> {
-        <T as latest::http::types::HostRequestOptions>::drop(self, self_)
+        latest::http::types::HostRequestOptions::drop(self, self_)
     }
 }
 
-impl<T> wasi::http::types::HostFields for T
-where
-    T: WasiHttpView + Send,
-{
+impl wasi::http::types::HostFields for dyn WasiHttpView + '_ {
     fn new(&mut self) -> wasmtime::Result<Resource<Fields>> {
-        <T as latest::http::types::HostFields>::new(self)
+        latest::http::types::HostFields::new(self)
     }
 
     fn from_list(
         &mut self,
         entries: Vec<(String, Vec<u8>)>,
     ) -> wasmtime::Result<Result<Resource<Fields>, HeaderError>> {
-        <T as latest::http::types::HostFields>::from_list(self, entries)
-            .map(|r| r.map_err(|e| e.into()))
+        latest::http::types::HostFields::from_list(self, entries).map(|r| r.map_err(|e| e.into()))
     }
 
     fn get(&mut self, self_: Resource<Fields>, name: String) -> wasmtime::Result<Vec<Vec<u8>>> {
-        <T as latest::http::types::HostFields>::get(self, self_, name)
+        latest::http::types::HostFields::get(self, self_, name)
     }
 
     fn set(
@@ -1677,7 +1555,7 @@ where
         name: String,
         value: Vec<Vec<u8>>,
     ) -> wasmtime::Result<Result<(), HeaderError>> {
-        <T as latest::http::types::HostFields>::set(self, self_, name, value)
+        latest::http::types::HostFields::set(self, self_, name, value)
             .map(|r| r.map_err(|e| e.into()))
     }
 
@@ -1686,8 +1564,7 @@ where
         self_: Resource<Fields>,
         name: String,
     ) -> wasmtime::Result<Result<(), HeaderError>> {
-        <T as latest::http::types::HostFields>::delete(self, self_, name)
-            .map(|r| r.map_err(|e| e.into()))
+        latest::http::types::HostFields::delete(self, self_, name).map(|r| r.map_err(|e| e.into()))
     }
 
     fn append(
@@ -1696,123 +1573,110 @@ where
         name: String,
         value: Vec<u8>,
     ) -> wasmtime::Result<Result<(), HeaderError>> {
-        <T as latest::http::types::HostFields>::append(self, self_, name, value)
+        latest::http::types::HostFields::append(self, self_, name, value)
             .map(|r| r.map_err(|e| e.into()))
     }
 
     fn entries(&mut self, self_: Resource<Fields>) -> wasmtime::Result<Vec<(String, Vec<u8>)>> {
-        <T as latest::http::types::HostFields>::entries(self, self_)
+        latest::http::types::HostFields::entries(self, self_)
     }
 
     fn clone(&mut self, self_: Resource<Fields>) -> wasmtime::Result<Resource<Fields>> {
-        <T as latest::http::types::HostFields>::clone(self, self_)
+        latest::http::types::HostFields::clone(self, self_)
     }
 
     fn drop(&mut self, rep: Resource<Fields>) -> wasmtime::Result<()> {
-        <T as latest::http::types::HostFields>::drop(self, rep)
+        latest::http::types::HostFields::drop(self, rep)
     }
 }
 
-impl<T> wasi::http::types::HostIncomingRequest for T
-where
-    T: WasiHttpView + Send,
-{
+impl wasi::http::types::HostIncomingRequest for dyn WasiHttpView + '_ {
     fn method(&mut self, self_: Resource<IncomingRequest>) -> wasmtime::Result<Method> {
-        <T as latest::http::types::HostIncomingRequest>::method(self, self_).map(|e| e.into())
+        latest::http::types::HostIncomingRequest::method(self, self_).map(|e| e.into())
     }
 
     fn path_with_query(
         &mut self,
         self_: Resource<IncomingRequest>,
     ) -> wasmtime::Result<Option<String>> {
-        <T as latest::http::types::HostIncomingRequest>::path_with_query(self, self_)
+        latest::http::types::HostIncomingRequest::path_with_query(self, self_)
     }
 
     fn scheme(&mut self, self_: Resource<IncomingRequest>) -> wasmtime::Result<Option<Scheme>> {
-        <T as latest::http::types::HostIncomingRequest>::scheme(self, self_)
-            .map(|e| e.map(|e| e.into()))
+        latest::http::types::HostIncomingRequest::scheme(self, self_).map(|e| e.map(|e| e.into()))
     }
 
     fn authority(&mut self, self_: Resource<IncomingRequest>) -> wasmtime::Result<Option<String>> {
-        <T as latest::http::types::HostIncomingRequest>::authority(self, self_)
+        latest::http::types::HostIncomingRequest::authority(self, self_)
     }
 
     fn headers(&mut self, self_: Resource<IncomingRequest>) -> wasmtime::Result<Resource<Headers>> {
-        <T as latest::http::types::HostIncomingRequest>::headers(self, self_)
+        latest::http::types::HostIncomingRequest::headers(self, self_)
     }
 
     fn consume(
         &mut self,
         self_: Resource<IncomingRequest>,
     ) -> wasmtime::Result<Result<Resource<IncomingBody>, ()>> {
-        <T as latest::http::types::HostIncomingRequest>::consume(self, self_)
+        latest::http::types::HostIncomingRequest::consume(self, self_)
     }
 
     fn drop(&mut self, rep: Resource<IncomingRequest>) -> wasmtime::Result<()> {
-        <T as latest::http::types::HostIncomingRequest>::drop(self, rep)
+        latest::http::types::HostIncomingRequest::drop(self, rep)
     }
 }
 
-impl<T> wasi::http::types::HostIncomingResponse for T
-where
-    T: WasiHttpView + Send,
-{
+impl wasi::http::types::HostIncomingResponse for dyn WasiHttpView + '_ {
     fn status(&mut self, self_: Resource<IncomingResponse>) -> wasmtime::Result<StatusCode> {
-        <T as latest::http::types::HostIncomingResponse>::status(self, self_)
+        latest::http::types::HostIncomingResponse::status(self, self_)
     }
 
     fn headers(
         &mut self,
         self_: Resource<IncomingResponse>,
     ) -> wasmtime::Result<Resource<Headers>> {
-        <T as latest::http::types::HostIncomingResponse>::headers(self, self_)
+        latest::http::types::HostIncomingResponse::headers(self, self_)
     }
 
     fn consume(
         &mut self,
         self_: Resource<IncomingResponse>,
     ) -> wasmtime::Result<Result<Resource<IncomingBody>, ()>> {
-        <T as latest::http::types::HostIncomingResponse>::consume(self, self_)
+        latest::http::types::HostIncomingResponse::consume(self, self_)
     }
 
     fn drop(&mut self, rep: Resource<IncomingResponse>) -> wasmtime::Result<()> {
-        <T as latest::http::types::HostIncomingResponse>::drop(self, rep)
+        latest::http::types::HostIncomingResponse::drop(self, rep)
     }
 }
 
-impl<T> wasi::http::types::HostIncomingBody for T
-where
-    T: WasiHttpView + Send,
-{
+impl wasi::http::types::HostIncomingBody for dyn WasiHttpView + '_ {
     fn stream(
         &mut self,
         self_: Resource<IncomingBody>,
     ) -> wasmtime::Result<Result<Resource<InputStream>, ()>> {
-        <T as latest::http::types::HostIncomingBody>::stream(self, self_)
+        latest::http::types::HostIncomingBody::stream(self, self_)
     }
 
     fn finish(
         &mut self,
         this: Resource<IncomingBody>,
     ) -> wasmtime::Result<Resource<FutureTrailers>> {
-        <T as latest::http::types::HostIncomingBody>::finish(self, this)
+        latest::http::types::HostIncomingBody::finish(self, this)
     }
 
     fn drop(&mut self, rep: Resource<IncomingBody>) -> wasmtime::Result<()> {
-        <T as latest::http::types::HostIncomingBody>::drop(self, rep)
+        latest::http::types::HostIncomingBody::drop(self, rep)
     }
 }
 
-impl<T> wasi::http::types::HostOutgoingRequest for T
-where
-    T: WasiHttpView + Send,
-{
+impl wasi::http::types::HostOutgoingRequest for dyn WasiHttpView + '_ {
     fn new(&mut self, headers: Resource<Headers>) -> wasmtime::Result<Resource<OutgoingRequest>> {
-        <T as latest::http::types::HostOutgoingRequest>::new(self, headers)
+        latest::http::types::HostOutgoingRequest::new(self, headers)
     }
 
     fn method(&mut self, self_: Resource<OutgoingRequest>) -> wasmtime::Result<Method> {
-        <T as latest::http::types::HostOutgoingRequest>::method(self, self_).map(|m| m.into())
+        latest::http::types::HostOutgoingRequest::method(self, self_).map(|m| m.into())
     }
 
     fn set_method(
@@ -1820,14 +1684,14 @@ where
         self_: Resource<OutgoingRequest>,
         method: Method,
     ) -> wasmtime::Result<Result<(), ()>> {
-        <T as latest::http::types::HostOutgoingRequest>::set_method(self, self_, method.into())
+        latest::http::types::HostOutgoingRequest::set_method(self, self_, method.into())
     }
 
     fn path_with_query(
         &mut self,
         self_: Resource<OutgoingRequest>,
     ) -> wasmtime::Result<Option<String>> {
-        <T as latest::http::types::HostOutgoingRequest>::path_with_query(self, self_)
+        latest::http::types::HostOutgoingRequest::path_with_query(self, self_)
     }
 
     fn set_path_with_query(
@@ -1835,16 +1699,11 @@ where
         self_: Resource<OutgoingRequest>,
         path_with_query: Option<String>,
     ) -> wasmtime::Result<Result<(), ()>> {
-        <T as latest::http::types::HostOutgoingRequest>::set_path_with_query(
-            self,
-            self_,
-            path_with_query,
-        )
+        latest::http::types::HostOutgoingRequest::set_path_with_query(self, self_, path_with_query)
     }
 
     fn scheme(&mut self, self_: Resource<OutgoingRequest>) -> wasmtime::Result<Option<Scheme>> {
-        <T as latest::http::types::HostOutgoingRequest>::scheme(self, self_)
-            .map(|s| s.map(|s| s.into()))
+        latest::http::types::HostOutgoingRequest::scheme(self, self_).map(|s| s.map(|s| s.into()))
     }
 
     fn set_scheme(
@@ -1852,15 +1711,11 @@ where
         self_: Resource<OutgoingRequest>,
         scheme: Option<Scheme>,
     ) -> wasmtime::Result<Result<(), ()>> {
-        <T as latest::http::types::HostOutgoingRequest>::set_scheme(
-            self,
-            self_,
-            scheme.map(|s| s.into()),
-        )
+        latest::http::types::HostOutgoingRequest::set_scheme(self, self_, scheme.map(|s| s.into()))
     }
 
     fn authority(&mut self, self_: Resource<OutgoingRequest>) -> wasmtime::Result<Option<String>> {
-        <T as latest::http::types::HostOutgoingRequest>::authority(self, self_)
+        latest::http::types::HostOutgoingRequest::authority(self, self_)
     }
 
     fn set_authority(
@@ -1868,36 +1723,33 @@ where
         self_: Resource<OutgoingRequest>,
         authority: Option<String>,
     ) -> wasmtime::Result<Result<(), ()>> {
-        <T as latest::http::types::HostOutgoingRequest>::set_authority(self, self_, authority)
+        latest::http::types::HostOutgoingRequest::set_authority(self, self_, authority)
     }
 
     fn headers(&mut self, self_: Resource<OutgoingRequest>) -> wasmtime::Result<Resource<Headers>> {
-        <T as latest::http::types::HostOutgoingRequest>::headers(self, self_)
+        latest::http::types::HostOutgoingRequest::headers(self, self_)
     }
 
     fn body(
         &mut self,
         self_: Resource<OutgoingRequest>,
     ) -> wasmtime::Result<Result<Resource<OutgoingBody>, ()>> {
-        <T as latest::http::types::HostOutgoingRequest>::body(self, self_)
+        latest::http::types::HostOutgoingRequest::body(self, self_)
     }
 
     fn drop(&mut self, rep: Resource<OutgoingRequest>) -> wasmtime::Result<()> {
-        <T as latest::http::types::HostOutgoingRequest>::drop(self, rep)
+        latest::http::types::HostOutgoingRequest::drop(self, rep)
     }
 }
 
-impl<T> wasi::http::types::HostOutgoingResponse for T
-where
-    T: WasiHttpView + Send,
-{
+impl wasi::http::types::HostOutgoingResponse for dyn WasiHttpView + '_ {
     fn new(&mut self, headers: Resource<Headers>) -> wasmtime::Result<Resource<OutgoingResponse>> {
-        let headers = <T as latest::http::types::HostFields>::clone(self, headers)?;
-        <T as latest::http::types::HostOutgoingResponse>::new(self, headers)
+        let headers = latest::http::types::HostFields::clone(self, headers)?;
+        latest::http::types::HostOutgoingResponse::new(self, headers)
     }
 
     fn status_code(&mut self, self_: Resource<OutgoingResponse>) -> wasmtime::Result<StatusCode> {
-        <T as latest::http::types::HostOutgoingResponse>::status_code(self, self_)
+        latest::http::types::HostOutgoingResponse::status_code(self, self_)
     }
 
     fn set_status_code(
@@ -1905,37 +1757,34 @@ where
         self_: Resource<OutgoingResponse>,
         status_code: StatusCode,
     ) -> wasmtime::Result<Result<(), ()>> {
-        <T as latest::http::types::HostOutgoingResponse>::set_status_code(self, self_, status_code)
+        latest::http::types::HostOutgoingResponse::set_status_code(self, self_, status_code)
     }
 
     fn headers(
         &mut self,
         self_: Resource<OutgoingResponse>,
     ) -> wasmtime::Result<Resource<Headers>> {
-        <T as latest::http::types::HostOutgoingResponse>::headers(self, self_)
+        latest::http::types::HostOutgoingResponse::headers(self, self_)
     }
 
     fn body(
         &mut self,
         self_: Resource<OutgoingResponse>,
     ) -> wasmtime::Result<Result<Resource<OutgoingBody>, ()>> {
-        <T as latest::http::types::HostOutgoingResponse>::body(self, self_)
+        latest::http::types::HostOutgoingResponse::body(self, self_)
     }
 
     fn drop(&mut self, rep: Resource<OutgoingResponse>) -> wasmtime::Result<()> {
-        <T as latest::http::types::HostOutgoingResponse>::drop(self, rep)
+        latest::http::types::HostOutgoingResponse::drop(self, rep)
     }
 }
 
-impl<T> wasi::http::types::HostOutgoingBody for T
-where
-    T: WasiHttpView + Send,
-{
+impl wasi::http::types::HostOutgoingBody for dyn WasiHttpView + '_ {
     fn write(
         &mut self,
         self_: Resource<OutgoingBody>,
     ) -> wasmtime::Result<Result<Resource<OutputStream>, ()>> {
-        <T as latest::http::types::HostOutgoingBody>::write(self, self_)
+        latest::http::types::HostOutgoingBody::write(self, self_)
     }
 
     fn finish(
@@ -1943,54 +1792,44 @@ where
         this: Resource<OutgoingBody>,
         trailers: Option<Resource<Trailers>>,
     ) -> wasmtime::Result<Result<(), HttpErrorCode>> {
-        match <T as latest::http::types::HostOutgoingBody>::finish(self, this, trailers) {
+        match latest::http::types::HostOutgoingBody::finish(self, this, trailers) {
             Ok(()) => Ok(Ok(())),
             Err(e) => Ok(Err(e.downcast()?.into())),
         }
     }
 
     fn drop(&mut self, rep: Resource<OutgoingBody>) -> wasmtime::Result<()> {
-        <T as latest::http::types::HostOutgoingBody>::drop(self, rep)
+        latest::http::types::HostOutgoingBody::drop(self, rep)
     }
 }
 
-impl<T> wasi::http::types::HostResponseOutparam for T
-where
-    T: WasiHttpView + Send,
-{
+impl wasi::http::types::HostResponseOutparam for dyn WasiHttpView + '_ {
     fn set(
         &mut self,
         param: Resource<ResponseOutparam>,
         response: Result<Resource<OutgoingResponse>, HttpErrorCode>,
     ) -> wasmtime::Result<()> {
-        <T as latest::http::types::HostResponseOutparam>::set(
-            self,
-            param,
-            response.map_err(|e| e.into()),
-        )
+        latest::http::types::HostResponseOutparam::set(self, param, response.map_err(|e| e.into()))
     }
 
     fn drop(&mut self, rep: Resource<ResponseOutparam>) -> wasmtime::Result<()> {
-        <T as latest::http::types::HostResponseOutparam>::drop(self, rep)
+        latest::http::types::HostResponseOutparam::drop(self, rep)
     }
 }
 
-impl<T> wasi::http::types::HostFutureTrailers for T
-where
-    T: WasiHttpView + Send,
-{
+impl wasi::http::types::HostFutureTrailers for dyn WasiHttpView + '_ {
     fn subscribe(
         &mut self,
         self_: Resource<FutureTrailers>,
     ) -> wasmtime::Result<Resource<Pollable>> {
-        <T as latest::http::types::HostFutureTrailers>::subscribe(self, self_)
+        latest::http::types::HostFutureTrailers::subscribe(self, self_)
     }
 
     fn get(
         &mut self,
         self_: Resource<FutureTrailers>,
     ) -> wasmtime::Result<Option<Result<Option<Resource<Trailers>>, HttpErrorCode>>> {
-        match <T as latest::http::types::HostFutureTrailers>::get(self, self_)? {
+        match latest::http::types::HostFutureTrailers::get(self, self_)? {
             Some(Ok(Ok(trailers))) => Ok(Some(Ok(trailers))),
             Some(Ok(Err(e))) => Ok(Some(Err(e.into()))),
             Some(Err(())) => Err(anyhow::anyhow!("trailers have already been retrieved")),
@@ -1999,20 +1838,17 @@ where
     }
 
     fn drop(&mut self, rep: Resource<FutureTrailers>) -> wasmtime::Result<()> {
-        <T as latest::http::types::HostFutureTrailers>::drop(self, rep)
+        latest::http::types::HostFutureTrailers::drop(self, rep)
     }
 }
 
-impl<T> wasi::http::types::HostFutureIncomingResponse for T
-where
-    T: WasiHttpView + Send,
-{
+impl wasi::http::types::HostFutureIncomingResponse for dyn WasiHttpView + '_ {
     fn get(
         &mut self,
         self_: Resource<FutureIncomingResponse>,
     ) -> wasmtime::Result<Option<Result<Result<Resource<IncomingResponse>, HttpErrorCode>, ()>>>
     {
-        match <T as latest::http::types::HostFutureIncomingResponse>::get(self, self_)? {
+        match latest::http::types::HostFutureIncomingResponse::get(self, self_)? {
             None => Ok(None),
             Some(Ok(Ok(response))) => Ok(Some(Ok(Ok(response)))),
             Some(Ok(Err(e))) => Ok(Some(Ok(Err(e.into())))),
@@ -2024,24 +1860,21 @@ where
         &mut self,
         self_: Resource<FutureIncomingResponse>,
     ) -> wasmtime::Result<Resource<Pollable>> {
-        <T as latest::http::types::HostFutureIncomingResponse>::subscribe(self, self_)
+        latest::http::types::HostFutureIncomingResponse::subscribe(self, self_)
     }
 
     fn drop(&mut self, rep: Resource<FutureIncomingResponse>) -> wasmtime::Result<()> {
-        <T as latest::http::types::HostFutureIncomingResponse>::drop(self, rep)
+        latest::http::types::HostFutureIncomingResponse::drop(self, rep)
     }
 }
 
-impl<T> wasi::http::outgoing_handler::Host for T
-where
-    T: WasiHttpView + Send,
-{
+impl wasi::http::outgoing_handler::Host for dyn WasiHttpView + '_ {
     fn handle(
         &mut self,
         request: Resource<OutgoingRequest>,
         options: Option<Resource<RequestOptions>>,
     ) -> wasmtime::Result<Result<Resource<FutureIncomingResponse>, HttpErrorCode>> {
-        match <T as latest::http::outgoing_handler::Host>::handle(self, request, options) {
+        match latest::http::outgoing_handler::Host::handle(self, request, options) {
             Ok(resp) => Ok(Ok(resp)),
             Err(e) => Ok(Err(e.downcast()?.into())),
         }

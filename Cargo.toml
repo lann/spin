@@ -126,10 +126,10 @@ hyper = { version = "1.0.0", features = ["full"] }
 reqwest = { version = "0.11", features = ["stream", "blocking"] }
 tracing = { version = "0.1", features = ["log"] }
 
-wasi-common-preview1 = { version = "21.0.0", package = "wasi-common", features = ["tokio"] }
-wasmtime = "21.0.0"
-wasmtime-wasi = "21.0.0"
-wasmtime-wasi-http = "21.0.0"
+wasi-common-preview1 = { git = "https://github.com/bytecodealliance/wasmtime", rev = "23409ca7e184ef3b7d42fe17938caed470643d5d", package = "wasi-common", features = ["tokio"] }
+wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "23409ca7e184ef3b7d42fe17938caed470643d5d" }
+wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "23409ca7e184ef3b7d42fe17938caed470643d5d" }
+wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "23409ca7e184ef3b7d42fe17938caed470643d5d" }
 
 spin-componentize = { path = "crates/componentize" }
 
