@@ -37,10 +37,9 @@ pub trait Factor: Any + Sized {
     }
 
     /// Performs factor-specific validation and configuration for the given
-    /// [`App`] and [`RuntimeConfig`]. A runtime may - but is not required to -
-    /// reuse the returned config across multiple instances. Note that this may
-    /// be called without any call to `init` in cases where only validation is
-    /// needed.
+    /// [`App`]. A runtime may - but is not required to - reuse the returned
+    /// config across multiple instances. Note that this may be called without
+    /// any call to `init` in cases where only validation is needed.
     fn configure_app<Factors: SpinFactors>(
         &self,
         app: &App,
@@ -150,6 +149,8 @@ pub trait FactorInstancePreparer<T: Factor>: Sized {
 /// to any already-initialized [`FactorInstancePreparer`]s, allowing for
 /// inter-[`Factor`] dependencies.
 pub struct PrepareContext<'a, Factors: SpinFactors> {
+    // TODO(lann): mixing & and &mut like this seems like a recipe for pain
+    // later; maybe use context only for & and separate params for &mut?
     configured_app: &'a ConfiguredApp<Factors>,
     instance_preparers: &'a mut Factors::InstancePreparers,
 }

@@ -6,7 +6,9 @@ edition = { workspace = true }
 
 [dependencies]
 anyhow = "1"
+futures-util = "0.3"
 ipnet = "2.9.0"
+spin-factor-variables = { path = "../factor-variables" }
 spin-factor-wasi = { path = "../factor-wasi" }
 spin-factors = { path = "../factors" }
 # TODO: merge with this crate
