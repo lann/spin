@@ -6551,6 +6551,7 @@ dependencies = [
  "spin-factor-wasi",
  "spin-factors",
  "spin-outbound-networking",
+ "tracing",
 ]
 
 [[package]]
