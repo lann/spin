@@ -6544,7 +6544,6 @@ dependencies = [
 name = "spin-factor-outbound-networking"
 version = "2.6.0-pre0"
 dependencies = [
- "anyhow",
  "futures-util",
  "ipnet",
  "spin-factor-variables",
@@ -6558,7 +6557,6 @@ dependencies = [
 name = "spin-factor-variables"
 version = "2.6.0-pre0"
 dependencies = [
- "anyhow",
  "spin-expressions",
  "spin-factors",
  "spin-world",
@@ -6568,7 +6566,6 @@ dependencies = [
 name = "spin-factor-wasi"
 version = "2.6.0-pre0"
 dependencies = [
- "anyhow",
  "cap-primitives 3.0.0",
  "spin-factors",
  "wasmtime-wasi",
@@ -6579,12 +6576,15 @@ name = "spin-factors"
 version = "2.6.0-pre0"
 dependencies = [
  "anyhow",
+ "serde",
  "serde_json",
  "spin-app",
  "spin-factor-outbound-networking",
  "spin-factor-variables",
  "spin-factor-wasi",
  "spin-factors-derive",
+ "thiserror",
+ "tracing",
  "wasmtime",
 ]
 
