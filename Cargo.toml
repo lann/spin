@@ -143,6 +143,7 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 indexmap = "2"
 itertools = "0.14"
 lazy_static = "1.5"
+oci-distribution = { git = "https://github.com/fermyon/oci-distribution", rev = "7e4ce9be9bcd22e78a28f06204931f10c44402ba" }
 path-absolutize = "3"
 pin-project-lite = "0.2.16"
 quote = "1"
@@ -192,3 +193,6 @@ blocks_in_conditions = "allow"
 [[bin]]
 name = "spin"
 path = "src/bin/spin.rs"
+
+[patch.crates-io]
+jwt = { git = "https://github.com/vdice/rust-jwt", rev = "c5b596d28a39dd428350b445d5c5829ba6352f02" }

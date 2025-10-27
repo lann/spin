@@ -4681,21 +4681,6 @@ dependencies = [
 [[package]]
 name = "jwt"
 version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6204285f77fe7d9784db3fdc449ecce1a0114927a51d5a41c4c7a292011c015f"
-dependencies = [
- "base64 0.13.1",
- "crypto-common",
- "digest",
- "hmac",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "jwt"
-version = "0.16.0"
 source = "git+https://github.com/vdice/rust-jwt?rev=c5b596d28a39dd428350b445d5c5829ba6352f02#c5b596d28a39dd428350b445d5c5829ba6352f02"
 dependencies = [
  "base64 0.13.1",
@@ -5746,33 +5731,9 @@ dependencies = [
  "futures-util",
  "http 1.1.0",
  "http-auth",
- "jwt 0.16.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "jwt",
  "lazy_static 1.5.0",
  "oci-spec",
- "olpc-cjson",
- "regex",
- "reqwest 0.12.9",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "unicase",
-]
-
-[[package]]
-name = "oci-distribution"
-version = "0.11.0"
-source = "git+https://github.com/fermyon/oci-distribution?rev=7b291a39f74d1a3c9499d934a56cae6580fc8e37#7b291a39f74d1a3c9499d934a56cae6580fc8e37"
-dependencies = [
- "bytes",
- "chrono",
- "futures-util",
- "http 1.1.0",
- "http-auth",
- "jwt 0.16.0 (git+https://github.com/vdice/rust-jwt?rev=c5b596d28a39dd428350b445d5c5829ba6352f02)",
- "lazy_static 1.5.0",
  "olpc-cjson",
  "regex",
  "reqwest 0.12.9",
@@ -5795,7 +5756,7 @@ dependencies = [
  "futures-util",
  "http 1.1.0",
  "http-auth",
- "jwt 0.16.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "jwt",
  "lazy_static 1.5.0",
  "olpc-cjson",
  "regex",
@@ -8402,7 +8363,7 @@ dependencies = [
  "futures-util",
  "id-arena",
  "indexmap 2.7.1",
- "oci-distribution 0.11.0 (git+https://github.com/fermyon/oci-distribution?rev=7e4ce9be9bcd22e78a28f06204931f10c44402ba)",
+ "oci-distribution",
  "semver",
  "serde",
  "serde_json",
@@ -8905,7 +8866,7 @@ dependencies = [
  "docker_credential",
  "futures-util",
  "itertools 0.14.0",
- "oci-distribution 0.11.0 (git+https://github.com/fermyon/oci-distribution?rev=7b291a39f74d1a3c9499d934a56cae6580fc8e37)",
+ "oci-distribution",
  "reqwest 0.12.9",
  "serde",
  "serde_json",
